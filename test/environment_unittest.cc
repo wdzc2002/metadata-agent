@@ -112,7 +112,7 @@ TEST_F(EnvironmentTest, GetMetadataString) {
 
   Configuration config;
   Environment environment(config);
-  SetMetadataServerUrlForTest(&environment, server.GetUrl());
+  SetMetadataServerUrlForTest(&environment, server.GetUrl() + "/");
 
   EXPECT_EQ("hello", environment.GetMetadataString("a/b/c"));
   EXPECT_EQ("", environment.GetMetadataString("unknown/path"));

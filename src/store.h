@@ -94,11 +94,10 @@ class MetadataStore {
   void UpdateMetadata(const MonitoredResource& resource,
                       Metadata&& entry);
 
- private:
-  friend class MetadataReporter;
-  friend class MetadataStoreTest;
-
   void PurgeDeletedEntries();
+
+ private:
+  friend class MetadataStoreTest;
 
   const Configuration& config_;
 
