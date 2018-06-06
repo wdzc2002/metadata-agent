@@ -1222,7 +1222,9 @@ void KubernetesReader::WatchServices(MetadataUpdater::UpdateCallback callback) {
   } catch (const KubernetesReader::QueryException& e) {
     LOG(ERROR) << "No more service metadata will be collected";
   }
-  health_checker_->SetUnhealthy("kubernetes_service_thread");
+  if (health_checker_) {
+    health_checker_->SetUnhealthy("kubernetes_service_thread");
+  }
   LOG(INFO) << "Watch thread (service) exiting";
 }
 
@@ -1256,7 +1258,9 @@ void KubernetesReader::WatchEndpoints(
   } catch (const KubernetesReader::QueryException& e) {
     LOG(ERROR) << "No more endpoints metadata will be collected";
   }
-  health_checker_->SetUnhealthy("kubernetes_endpoints_thread");
+  if (health_checker_) {
+    health_checker_->SetUnhealthy("kubernetes_endpoints_thread");
+  }
   LOG(INFO) << "Watch thread (endpoints) exiting";
 }
 
