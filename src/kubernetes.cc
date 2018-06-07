@@ -30,7 +30,6 @@
 #include "configuration.h"
 #include "format.h"
 #include "http_common.h"
-#include "instance.h"
 #include "json.h"
 #include "logging.h"
 #include "resource.h"
@@ -101,8 +100,10 @@ class KubernetesReader::NonRetriableError
 };
 
 KubernetesReader::KubernetesReader(const Configuration& config,
+                                   const MetadataStore& store,
                                    HealthChecker* health_checker)
-    : config_(config), environment_(config), health_checker_(health_checker) {}
+    : config_(config), environment_(config), store_(store),
+      health_checker_(health_checker) {}
 
 MetadataUpdater::ResourceMetadata KubernetesReader::GetNodeMetadata(
     const json::Object* node, Timestamp collected_at, bool is_deleted) const
@@ -122,13 +123,17 @@ MetadataUpdater::ResourceMetadata KubernetesReader::GetNodeMetadata(
     {"location", location},
   });
 
-  json::value associations = json::object({
-    {"version", json::string(config_.MetadataIngestionRawContentVersion())},
-    {"raw", json::object({
-      {"infrastructureResource",
-       InstanceReader::InstanceResource(environment_).ToJSON()},
-    })},
-  });
+  json::value associations;
+  try {
+    associations = json::object({
+      {"version", json::string(config_.MetadataIngestionRawContentVersion())},
+      {"raw", json::object({
+        {"infrastructureResource", store_.LookupResource("").ToJSON()},
+      })},
+    });
+  } catch (const std::out_of_range& e) {
+    // No instance resource; proceed.
+  }
 
   json::value node_raw_metadata = json::object({
     {"blobs", json::object({
@@ -164,8 +169,12 @@ json::value KubernetesReader::ComputePodAssociations(const json::Object* pod)
   const json::Object* metadata = pod->Get<json::Object>("metadata");
   const std::string namespace_name = metadata->Get<json::String>("namespace");
 
-  json::value instance_resource =
-      InstanceReader::InstanceResource(environment_).ToJSON();
+  json::value instance_resource;
+  try {
+    instance_resource = store_.LookupResource("").ToJSON();
+  } catch (const std::out_of_range& e) {
+    // No instance resource; proceed.
+  }
 
   json::value controllers;
   try {
@@ -382,10 +391,14 @@ MetadataUpdater::ResourceMetadata KubernetesReader::GetContainerMetadata(
 
 MetadataUpdater::ResourceMetadata KubernetesReader::GetLegacyResource(
     const json::Object* pod, const std::string& container_name) const
-    throw(json::Exception) {
+    throw(QueryException, json::Exception) {
   const std::string instance_id = environment_.InstanceId();
   const std::string zone = environment_.InstanceZone();
   const std::string cluster_name = environment_.KubernetesClusterName();
+
+  if (instance_id.empty() || zone.empty()) {
+    throw QueryException("No instance information, skipping gke_container");
+  }
 
   const json::Object* metadata = pod->Get<json::Object>("metadata");
   const std::string namespace_name = metadata->Get<json::String>("namespace");
@@ -463,7 +476,11 @@ KubernetesReader::GetPodAndContainerMetadata(
         LOG(INFO) << "Container status: " << *container_status;
       }
     }
-    result.emplace_back(GetLegacyResource(pod, name));
+    try {
+      result.emplace_back(GetLegacyResource(pod, name));
+    } catch (const QueryException& e) {
+      LOG(INFO) << e.what();
+    }
     result.emplace_back(
         GetContainerMetadata(pod, container_spec, container_status,
                              associations->Clone(), collected_at, is_deleted));
@@ -1275,7 +1292,7 @@ void KubernetesReader::WatchEndpoints(
 KubernetesUpdater::KubernetesUpdater(const Configuration& config,
                                      HealthChecker* health_checker,
                                      MetadataStore* store)
-    : reader_(config, health_checker), PollingMetadataUpdater(
+    : reader_(config, *store, health_checker), PollingMetadataUpdater(
         config, store, "KubernetesUpdater",
         config.KubernetesUpdaterIntervalSeconds(),
         [=]() { return reader_.MetadataQuery(); }) { }

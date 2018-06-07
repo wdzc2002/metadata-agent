@@ -39,6 +39,7 @@ class MetadataStore;
 class KubernetesReader {
  public:
   KubernetesReader(const Configuration& config,
+                   const MetadataStore& store,
                    HealthChecker* health_checker);
   // A Kubernetes metadata query function.
   std::vector<MetadataUpdater::ResourceMetadata> MetadataQuery() const;
@@ -132,7 +133,7 @@ class KubernetesReader {
   // The returned "metadata" field will be Metadata::IGNORED.
   MetadataUpdater::ResourceMetadata GetLegacyResource(
       const json::Object* pod, const std::string& container_name) const
-      throw(json::Exception);
+      throw(QueryException, json::Exception);
   // Given a pod object, return the associated pod and container metadata.
   std::vector<MetadataUpdater::ResourceMetadata> GetPodAndContainerMetadata(
       const json::Object* pod, Timestamp collected_at, bool is_deleted) const
@@ -203,6 +204,7 @@ class KubernetesReader {
   mutable std::map<ServiceKey, std::vector<std::string>> service_to_pods_;
 
   const Configuration& config_;
+  const MetadataStore& store_;
   HealthChecker* health_checker_;
   Environment environment_;
 };
