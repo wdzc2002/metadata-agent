@@ -4,6 +4,8 @@
 #include "../src/updater.h"
 #include "gtest/gtest.h"
 
+#include <memory>
+
 namespace google {
 
 class KubernetesTest : public ::testing::Test {
@@ -72,19 +74,24 @@ class KubernetesTest : public ::testing::Test {
       throw(json::Exception) {
     return reader->UpdateServiceToPodsCache(endpoints, is_deleted);
   }
+
+  void SetUp() override {
+    config.reset(new Configuration(std::istringstream(
+      "KubernetesClusterName: TestClusterName\n"
+      "KubernetesClusterLocation: TestClusterLocation\n"
+      "MetadataIngestionRawContentVersion: TestVersion\n"
+      "InstanceZone: TestZone\n"
+      "InstanceId: TestID\n"
+    )));
+    reader.reset(new KubernetesReader(*config,
+                                      nullptr));  // Don't need HealthChecker.
+  }
+
+  std::unique_ptr<Configuration> config;
+  std::unique_ptr<KubernetesReader> reader;
 };
 
 TEST_F(KubernetesTest, GetNodeMetadata) {
-  Configuration config(std::istringstream(
-    "KubernetesClusterName: TestClusterName\n"
-    "KubernetesClusterLocation: TestClusterLocation\n"
-    "MetadataIngestionRawContentVersion: TestVersion\n"
-    "InstanceResourceType: gce_instance\n"
-    "InstanceZone: TestZone\n"
-    "InstanceId: TestID\n"
-  ));
-  Environment environment(config);
-  KubernetesReader reader(config, nullptr);  // Don't need HealthChecker.
   json::value node = json::object({
     {"metadata", json::object({
       {"name", json::string("testname")},
@@ -92,7 +99,7 @@ TEST_F(KubernetesTest, GetNodeMetadata) {
     })}
   });
   const auto m =
-      GetNodeMetadata(reader, node->As<json::Object>(), Timestamp(), false);
+      GetNodeMetadata(*reader, node->As<json::Object>(), Timestamp(), false);
   EXPECT_EQ(1, m.ids().size());
   EXPECT_EQ("k8s_node.testname", m.ids()[0]);
   EXPECT_EQ(MonitoredResource("k8s_node", {
@@ -129,15 +136,6 @@ TEST_F(KubernetesTest, GetNodeMetadata) {
 }
 
 TEST_F(KubernetesTest, ComputePodAssociations) {
-  Configuration config(std::stringstream(
-    "KubernetesClusterName: TestClusterName\n"
-    "KubernetesClusterLocation: TestClusterLocation\n"
-    "MetadataIngestionRawContentVersion: TestVersion\n"
-    "InstanceZone: TestZone\n"
-    "InstanceId: TestID\n"
-  ));
-  Environment environment(config);
-  KubernetesReader reader(config, nullptr);  // Don't need HealthChecker.
   json::value controller = json::object({
     {"controller", json::boolean(true)},
     {"apiVersion", json::string("1.2.3")},
@@ -150,7 +148,7 @@ TEST_F(KubernetesTest, ComputePodAssociations) {
       {"uid", json::string("InnerTestUID1")},
     })},
   });
-  UpdateOwnersCache(&reader, "1.2.3/TestKind/TestUID1", controller);
+  UpdateOwnersCache(reader.get(), "1.2.3/TestKind/TestUID1", controller);
   json::value pod = json::object({
     {"metadata", json::object({
       {"namespace", json::string("TestNamespace")},
@@ -183,20 +181,11 @@ TEST_F(KubernetesTest, ComputePodAssociations) {
     {"version", json::string("TestVersion")},
   });
   const auto associations =
-      ComputePodAssociations(reader, pod->As<json::Object>());
+      ComputePodAssociations(*reader, pod->As<json::Object>());
   EXPECT_EQ(expected_associations->ToString(), associations->ToString());
 }
 
 TEST_F(KubernetesTest, GetPodMetadata) {
-  Configuration config(std::stringstream(
-    "KubernetesClusterName: TestClusterName\n"
-    "KubernetesClusterLocation: TestClusterLocation\n"
-    "MetadataApiResourceTypeSeparator: \".\"\n"
-    "MetadataIngestionRawContentVersion: TestVersion\n"
-  ));
-  Environment environment(config);
-  KubernetesReader reader(config, nullptr);  // Don't need HealthChecker.
-
   json::value pod = json::object({
     {"metadata", json::object({
       {"namespace", json::string("TestNamespace")},
@@ -205,7 +194,7 @@ TEST_F(KubernetesTest, GetPodMetadata) {
       {"creationTimestamp", json::string("2018-03-03T01:23:45.678901234Z")},
     })},
   });
-  const auto m = GetPodMetadata(reader, pod->As<json::Object>(),
+  const auto m = GetPodMetadata(*reader, pod->As<json::Object>(),
                                 json::string("TestAssociations"), Timestamp(),
                                 false);
 
@@ -244,14 +233,6 @@ TEST_F(KubernetesTest, GetPodMetadata) {
 }
 
 TEST_F(KubernetesTest, GetLegacyResource) {
-  Configuration config(std::stringstream(
-    "KubernetesClusterName: TestClusterName\n"
-    "MetadataApiResourceTypeSeparator: \".\"\n"
-    "InstanceZone: TestZone\n"
-    "InstanceId: TestID\n"
-  ));
-  Environment environment(config);
-  KubernetesReader reader(config, nullptr);  // Don't need HealthChecker.
   json::value pod = json::object({
     {"metadata", json::object({
       {"namespace", json::string("TestNamespace")},
@@ -259,7 +240,7 @@ TEST_F(KubernetesTest, GetLegacyResource) {
       {"uid", json::string("TestUid")},
     })},
   });
-  const auto m = GetLegacyResource(reader, pod->As<json::Object>(),
+  const auto m = GetLegacyResource(*reader, pod->As<json::Object>(),
                                    "TestContainerName");
   EXPECT_EQ(std::vector<std::string>({
     "gke_container.TestNamespace.TestUid.TestContainerName",
@@ -277,14 +258,7 @@ TEST_F(KubernetesTest, GetLegacyResource) {
 }
 
 TEST_F(KubernetesTest, GetClusterMetadataEmpty) {
-  Configuration config(std::istringstream(
-    "KubernetesClusterName: TestClusterName\n"
-    "KubernetesClusterLocation: TestClusterLocation\n"
-    "MetadataIngestionRawContentVersion: TestVersion\n"
-  ));
-  Environment environment(config);
-  KubernetesReader reader(config, nullptr);  // Don't need HealthChecker.
-  const auto m = GetClusterMetadata(reader, Timestamp());
+  const auto m = GetClusterMetadata(*reader, Timestamp());
   EXPECT_TRUE(m.ids().empty());
   EXPECT_EQ(MonitoredResource("k8s_cluster", {
     {"cluster_name", "TestClusterName"},
@@ -303,22 +277,15 @@ TEST_F(KubernetesTest, GetClusterMetadataEmpty) {
 }
 
 TEST_F(KubernetesTest, GetClusterMetadataEmptyService) {
-  Configuration config(std::istringstream(
-    "KubernetesClusterName: TestClusterName\n"
-    "KubernetesClusterLocation: TestClusterLocation\n"
-    "MetadataIngestionRawContentVersion: TestVersion\n"
-  ));
-  Environment environment(config);
   json::value service = json::object({
     {"metadata", json::object({
       {"name", json::string("testname")},
       {"namespace", json::string("testnamespace")},
     })},
   });
-  KubernetesReader reader(config, nullptr);  // Don't need HealthChecker.
   UpdateServiceToMetadataCache(
-      &reader, service->As<json::Object>(), /*is_deleted=*/false);
-  const auto m = GetClusterMetadata(reader, Timestamp());
+      reader.get(), service->As<json::Object>(), /*is_deleted=*/false);
+  const auto m = GetClusterMetadata(*reader, Timestamp());
   EXPECT_TRUE(m.ids().empty());
   EXPECT_EQ(MonitoredResource("k8s_cluster", {
     {"cluster_name", "TestClusterName"},
@@ -345,12 +312,6 @@ TEST_F(KubernetesTest, GetClusterMetadataEmptyService) {
 }
 
 TEST_F(KubernetesTest, GetClusterMetadataServiceWithPods) {
-  Configuration config(std::istringstream(
-    "KubernetesClusterName: TestClusterName\n"
-    "KubernetesClusterLocation: TestClusterLocation\n"
-    "MetadataIngestionRawContentVersion: TestVersion\n"
-  ));
-  Environment environment(config);
   json::value service = json::object({
     {"metadata", json::object({
       {"name", json::string("testname")},
@@ -375,12 +336,11 @@ TEST_F(KubernetesTest, GetClusterMetadataServiceWithPods) {
       }),
     })},
   });
-  KubernetesReader reader(config, nullptr);  // Don't need HealthChecker.
   UpdateServiceToMetadataCache(
-      &reader, service->As<json::Object>(), /*is_deleted=*/false);
+      reader.get(), service->As<json::Object>(), /*is_deleted=*/false);
   UpdateServiceToPodsCache(
-      &reader, endpoints->As<json::Object>(), /*is_deleted=*/false);
-  const auto m = GetClusterMetadata(reader, Timestamp());
+      reader.get(), endpoints->As<json::Object>(), /*is_deleted=*/false);
+  const auto m = GetClusterMetadata(*reader, Timestamp());
   EXPECT_TRUE(m.ids().empty());
   EXPECT_EQ(MonitoredResource("k8s_cluster", {
     {"cluster_name", "TestClusterName"},
@@ -415,24 +375,17 @@ TEST_F(KubernetesTest, GetClusterMetadataServiceWithPods) {
 }
 
 TEST_F(KubernetesTest, GetClusterMetadataDeletedService) {
-  Configuration config(std::istringstream(
-    "KubernetesClusterName: TestClusterName\n"
-    "KubernetesClusterLocation: TestClusterLocation\n"
-    "MetadataIngestionRawContentVersion: TestVersion\n"
-  ));
-  Environment environment(config);
   json::value service = json::object({
     {"metadata", json::object({
       {"name", json::string("testname")},
       {"namespace", json::string("testnamespace")},
     })},
   });
-  KubernetesReader reader(config, nullptr);  // Don't need HealthChecker.
   UpdateServiceToMetadataCache(
-      &reader, service->As<json::Object>(), /*is_deleted=*/false);
+      reader.get(), service->As<json::Object>(), /*is_deleted=*/false);
   UpdateServiceToMetadataCache(
-      &reader, service->As<json::Object>(), /*is_deleted=*/true);
-  const auto m = GetClusterMetadata(reader, Timestamp());
+      reader.get(), service->As<json::Object>(), /*is_deleted=*/true);
+  const auto m = GetClusterMetadata(*reader, Timestamp());
   EXPECT_TRUE(m.ids().empty());
   json::value empty_cluster = json::object({
     {"blobs", json::object({
@@ -443,13 +396,6 @@ TEST_F(KubernetesTest, GetClusterMetadataDeletedService) {
 }
 
 TEST_F(KubernetesTest, GetContainerMetadata) {
-  Configuration config(std::stringstream(
-    "KubernetesClusterName: TestClusterName\n"
-    "KubernetesClusterLocation: TestClusterLocation\n"
-    "MetadataApiResourceTypeSeparator: \".\"\n"
-  ));
-  Environment environment(config);
-  KubernetesReader reader(config, nullptr);  // Don't need HealthChecker.
   json::value pod = json::object({
     {"metadata", json::object({
       {"namespace", json::string("TestNamespace")},
@@ -464,7 +410,7 @@ TEST_F(KubernetesTest, GetContainerMetadata) {
     {"containerID", json::string("docker://TestContainerID")},
   });
   const auto m = GetContainerMetadata(
-      reader,
+      *reader,
       pod->As<json::Object>(),
       spec->As<json::Object>(),
       status->As<json::Object>(),
@@ -516,17 +462,6 @@ TEST_F(KubernetesTest, GetContainerMetadata) {
   EXPECT_EQ(expected_metadata->ToString(), m.metadata().metadata->ToString());
 }
 TEST_F(KubernetesTest, GetPodAndContainerMetadata) {
-  Configuration config(std::stringstream(
-    "KubernetesClusterName: TestClusterName\n"
-    "KubernetesClusterLocation: TestClusterLocation\n"
-    "MetadataApiResourceTypeSeparator: \".\"\n"
-    "MetadataIngestionRawContentVersion: TestVersion\n"
-    "InstanceZone: TestZone\n"
-    "InstanceId: TestID\n"
-  ));
-  Environment environment(config);
-  KubernetesReader reader(config, nullptr);  // Don't need HealthChecker.
-
   json::value controller = json::object({
     {"controller", json::boolean(true)},
     {"apiVersion", json::string("1.2.3")},
@@ -539,7 +474,7 @@ TEST_F(KubernetesTest, GetPodAndContainerMetadata) {
       {"uid", json::string("InnerTestUID1")},
     })},
   });
-  UpdateOwnersCache(&reader, "1.2.3/TestKind/TestUID1", controller);
+  UpdateOwnersCache(reader.get(), "1.2.3/TestKind/TestUID1", controller);
   json::value pod = json::object({
     {"metadata", json::object({
       {"name", json::string("TestPodName")},
@@ -564,7 +499,7 @@ TEST_F(KubernetesTest, GetPodAndContainerMetadata) {
   });
 
   auto m = GetPodAndContainerMetadata(
-      reader, pod->As<json::Object>(), Timestamp(), false);
+      *reader, pod->As<json::Object>(), Timestamp(), false);
   EXPECT_EQ(3, m.size());
   EXPECT_EQ(std::vector<std::string>({
     "gke_container.TestNamespace.TestPodUid.TestContainerName0",
@@ -696,4 +631,5 @@ TEST_F(KubernetesTest, GetPodAndContainerMetadata) {
   EXPECT_EQ(pod_metadata->ToString(),
             m[2].metadata().metadata->ToString());
 }
+
 }  // namespace google
